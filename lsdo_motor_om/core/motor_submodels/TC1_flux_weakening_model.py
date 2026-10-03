@@ -7,6 +7,7 @@ from .TC1_torque_limit_model import ELECTRICAL_NAMES
 
 
 def fw_coefficients(t, w, r, ld, lq, psi, p, v):
+    """Voltage-boundary polynomial with w in electrical rad/s."""
     d = 3*p*(ld-lq)
     return np.array([
         d**2*(r**2+(w*ld)**2),
@@ -21,6 +22,7 @@ def fw_coefficients(t, w, r, ld, lq, psi, p, v):
 
 
 def fw_upper(w, r, ld, lq, psi, v):
+    """D-axis intercept of the voltage ellipse at electrical speed w (rad/s)."""
     asymp = -psi/(ld-lq)
     arg = v**2*(w**2*ld**2+r**2)-(r*w*psi)**2
     if np.real(arg) < 0:
@@ -42,6 +44,7 @@ def fw_root(coeff, lower, upper):
 
 
 def fw_currents(t, w, r, ld, lq, psi, p, v, lower):
+    """Currents at torque t and electrical angular speed w (rad/s)."""
     _, _, upper = fw_upper(w, r, ld, lq, psi, v)
     id_ = fw_root(fw_coefficients(t, w, r, ld, lq, psi, p, v), lower, upper)
     iq = t/(1.5*p*(psi+(ld-lq)*id_))
@@ -56,8 +59,8 @@ class FluxWeakeningCoefficients(om.ExplicitComponent):
 
     def setup(self):
         n = self.options['num_nodes']
-        for name in (*ELECTRICAL_NAMES, 'T_em', 'omega'):
-            self.add_input(name, shape=n)
+        for name in (*ELECTRICAL_NAMES, 'T_em', 'omega_electrical'):
+            self.add_input(name, shape=n, units='rad/s' if name == 'omega_electrical' else None)
         for name in ('a1', 'a2', 'a3', 'a4', 'a5', 'I_d_asymp', 'I_d_voltage_upper_lim', 'Id_upper_lim'):
             self.add_output(name, shape=n)
         self.add_output('I_d_upper_bracket_list', shape=(n, 2))
@@ -67,10 +70,10 @@ class FluxWeakeningCoefficients(om.ExplicitComponent):
         p, v = self.options['pole_pairs'], self.options['V_lim']
         for i in range(self.options['num_nodes']):
             r, ld, lq, psi = (x[n][i] for n in ELECTRICAL_NAMES)
-            coeff = fw_coefficients(x['T_em'][i], x['omega'][i], r, ld, lq, psi, p, v)
+            coeff = fw_coefficients(x['T_em'][i], x['omega_electrical'][i], r, ld, lq, psi, p, v)
             for j in range(5):
                 outputs[f'a{j+1}'][i] = coeff[j]
-            asymp, voltage, upper = fw_upper(x['omega'][i], r, ld, lq, psi, v)
+            asymp, voltage, upper = fw_upper(x['omega_electrical'][i], r, ld, lq, psi, v)
             outputs['I_d_asymp'][i] = asymp
             outputs['I_d_voltage_upper_lim'][i] = voltage
             outputs['Id_upper_lim'][i] = upper
@@ -125,8 +128,8 @@ class FluxWeakeningBracketCoefficients(om.ExplicitComponent):
 
     def setup(self):
         n = self.options['num_nodes']
-        for name in (*ELECTRICAL_NAMES, 'T_lim', 'omega'):
-            self.add_input(name, shape=n)
+        for name in (*ELECTRICAL_NAMES, 'T_lim', 'omega_electrical'):
+            self.add_input(name, shape=n, units='rad/s' if name == 'omega_electrical' else None)
         for name in ('a_bracket', 'c_bracket', 'd_bracket', 'e_bracket'):
             self.add_output(name, shape=n)
         self.declare_partials('*', '*', method='cs')
@@ -134,7 +137,7 @@ class FluxWeakeningBracketCoefficients(om.ExplicitComponent):
     def compute(self, x, outputs):
         p, v = self.options['pole_pairs'], self.options['V_lim']
         r, ld, lq, psi = (x[n] for n in ELECTRICAL_NAMES)
-        w, t = x['omega'], x['T_lim']
+        w, t = x['omega_electrical'], x['T_lim']
         den = 3*p*(ld-lq)
         outputs['a_bracket'] = den**2*((w*lq)**2+r**2)
         outputs['c_bracket'] = (3*p*psi)**2*(r**2+(w*lq)**2)+12*p*w*r*t*(ld-lq)**2-(v*den)**2

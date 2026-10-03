@@ -9,6 +9,7 @@ import openmdao.api as om
 from .._utils import MOTOR_VARIABLE_NAMES, sigmoid, scalar
 from .TC1_torque_limit_model import ELECTRICAL_NAMES
 from .TC1_mtpa_model import mtpa_currents
+from .TC1_motor_speed_model import SPEED_UNITS
 from .TC1_flux_weakening_model import fw_currents
 
 PERFORMANCE_OUTPUTS = (
@@ -29,21 +30,26 @@ def declare_performance_options(component):
                               values=['input_load', 'efficiency_map', 'model_test'])
 
 
-def operating_performance(torque, load, w, r, ld, lq, psi, geometry, diameter,
+def operating_performance(torque, load, omega_mechanical, omega_electrical, electrical_frequency,
+                          r, ld, lq, psi, geometry, diameter,
                           bdelta, iq_rated, lower, p, m, rated_current, voltage,
                           loss_model='input_load', currents=None):
-    """Evaluate one node; also used inside the electromagnetic-torque residual."""
+    """Evaluate one node using mechanical rad/s, electrical rad/s, and Hz.
+
+    This same function supplies losses to the implicit torque residual.
+    """
     if currents is None:
         id_mtpa, iq_mtpa = mtpa_currents(torque, ld, lq, psi, p)
-        id_fw, iq_fw = fw_currents(torque, w, r, ld, lq, psi, p, voltage, lower)
+        id_fw, iq_fw = fw_currents(torque, omega_electrical, r, ld, lq, psi, p, voltage, lower)
     else:
         id_mtpa, iq_mtpa, id_fw, iq_fw = currents
-    ud = r*id_mtpa-w*lq*iq_mtpa
-    uq = w*ld*id_mtpa+r*iq_mtpa+w*psi
+    ud = r*id_mtpa-omega_electrical*lq*iq_mtpa
+    uq = omega_electrical*ld*id_mtpa+r*iq_mtpa+omega_electrical*psi
     u_mtpa = np.sqrt(ud**2+uq**2)
-    fi = 5000*p/60
-    ud_rated = -r*rated_current*np.sin(.6283)-2*np.pi*fi*lq*iq_rated
-    uq_rated = r*rated_current*np.sin(.6283)+2*np.pi*fi*(psi-ld*iq_rated)
+    # The inherited rated-voltage diagnostic assumes 5000 motor mechanical RPM.
+    omega_electrical_rated = p*5000*2*np.pi/60
+    ud_rated = -r*rated_current*np.sin(.6283)-omega_electrical_rated*lq*iq_rated
+    uq_rated = r*rated_current*np.sin(.6283)+omega_electrical_rated*(psi-ld*iq_rated)
     u_rated = np.sqrt(ud_rated**2+uq_rated**2)
     if loss_model == 'model_test':
         weight = sigmoid(u_rated-voltage)
@@ -53,10 +59,7 @@ def operating_performance(torque, load, w, r, ld, lq, psi, geometry, diameter,
     iq = weight*iq_fw+(1-weight)*iq_mtpa
     id_ = (torque/(1.5*p*iq)-psi)/(ld-lq)
     current2 = iq**2+id_**2
-    # Preserve the original main-path speed factors. See docs/migration.md.
-    speed_factor = 1. if loss_model == 'model_test' else 2*np.pi/60
-    p0 = load*w*speed_factor
-    frequency = w*p/60
+    p0 = load*omega_mechanical
     pcopper = m*r*current2
     lef, d1, d2, bm, acu = (geometry[i] for i in (4, 0, 5, 16, 7))
     vs = np.pi*lef*(d1-diameter)**2/4-36*lef*acu
@@ -67,11 +70,11 @@ def operating_performance(torque, load, w, r, ld, lq, psi, geometry, diameter,
     if loss_model == 'model_test':
         magnetic_volume = np.pi*lef*(d1-diameter)**2-36*lef*acu
         ke *= 10
-    peddy = ke*magnetic_volume*(bdelta*frequency)**2
-    peddy_s = ke*vt*(bdelta*frequency)**2 if loss_model == 'input_load' else 0.*peddy
-    ph = 100*magnetic_volume*frequency*bdelta**2
+    peddy = ke*magnetic_volume*(bdelta*electrical_frequency)**2
+    peddy_s = ke*vt*(bdelta*electrical_frequency)**2 if loss_model == 'input_load' else 0.*peddy
+    ph = 100*magnetic_volume*electrical_frequency*bdelta**2
     pstress = .01*p0
-    pwo = 4*np.pi*.003*1.225*(2*np.pi*frequency)**2*lef*d2**4
+    pwo = 4*np.pi*.003*1.225*omega_mechanical**2*lef*d2**4
     pm = 100. if loss_model == 'input_load' else 0.
     loss = pcopper+peddy+peddy_s+ph+pstress+pwo+pm
     return dict(I_d=id_, I_q=iq, current_amplitude=np.sqrt(current2),
@@ -84,7 +87,8 @@ def operating_performance(torque, load, w, r, ld, lq, psi, geometry, diameter,
 def node_performance(x, index, torque, load, options, currents=None):
     r, ld, lq, psi = (x[n][index] for n in ELECTRICAL_NAMES)
     return operating_performance(
-        torque, load, x['omega'][index], r, ld, lq, psi, x['motor_variables'],
+        torque, load, x['omega_mechanical'][index], x['omega_electrical'][index],
+        x['electrical_frequency'][index], r, ld, lq, psi, x['motor_variables'],
         scalar(x['D_i']), scalar(x['B_delta']), scalar(x['I_q_temp']),
         x['Id_fw_bracket'][index], options['pole_pairs'], options['phases'],
         options['rated_current'], options['V_lim'], options['loss_model'], currents)
@@ -98,9 +102,9 @@ class PostProcessingModel(om.ExplicitComponent):
 
     def setup(self):
         n = self.options['num_nodes']
-        for name in (*ELECTRICAL_NAMES, 'omega', 'T_em', 'load_torque',
+        for name in (*ELECTRICAL_NAMES, *SPEED_UNITS, 'T_em', 'load_torque',
                      'Id_fw_bracket', 'Id_fw', 'Iq_fw', 'Id_MTPA', 'Iq_MTPA'):
-            self.add_input(name, shape=n)
+            self.add_input(name, shape=n, units=SPEED_UNITS.get(name))
         for name in ('D_i', 'B_delta', 'I_q_temp'):
             self.add_input(name)
         self.add_input('motor_variables', shape=25)

@@ -47,8 +47,9 @@ problem.set_val('load_torque_rotor', [400.]) # rotor load torque, Nm
 problem.run_model()
 
 print(problem['motor_mass'])   # approximately [334.34260786] kg
-print(problem['input_power'])  # approximately [6867.662186] W
-print(problem['efficiency'])   # approximately [0.95807512]
+print(problem['output_power']) # approximately [62831.853072] W
+print(problem['input_power'])  # approximately [75196.634347] W
+print(problem['efficiency'])   # approximately [0.83556736]
 print(problem.compute_totals(of=['input_power'], wrt=['D_i', 'L']))
 ```
 
@@ -80,7 +81,7 @@ lsdo_motor_om/
       mu_fitting.py
       Magnetic_alloy_silicon_core_iron_C.tab
 examples/                                analysis, efficiency map, optimization
-tests/                                   CSDL parity and derivative regression tests
+tests/                                   speed units, physics, legacy geometry, derivatives
 docs/migration.md                        model mapping, conventions, and repairs
 tools/generate_csdl_reference.py          optional CSDL reference capture
 ```
@@ -99,6 +100,8 @@ the default fit reads the packaged data independently of the working directory.
 | `output_power_full`, `load_torque_full` | `num_nodes` | Output power and gearbox-adjusted load torque |
 | `T_em`, `current_amplitude`, `output_power` | `num_active_nodes` | Active-node results |
 | `input_power_active`, `efficiency_active` | `num_active_nodes` | Active-node power and efficiency |
+| `omega_mechanical`, `omega` | `num_active_nodes` | Motor mechanical speed (rad/s); `omega` is an alias |
+| `omega_electrical`, `electrical_frequency` | `num_active_nodes` | Motor electrical speed (rad/s) and frequency (Hz) |
 | `T_lim`, `T_upper_lim_curve` | `num_active_nodes` | Voltage torque limit, then smooth structural/voltage minimum |
 | `max_torque_constraint` | `num_active_nodes` | Original torque margin: upper limit minus load torque |
 | `em_torque_constraint` | `num_active_nodes` | Upper limit minus electromagnetic torque |
@@ -114,19 +117,48 @@ the main loss equations. `EfficiencyMapModel` preserves the separate original
 efficiency-map loss variant. `TC1MotorModel(model_test=True)` accepts active-node
 `T_em` inputs and preserves the alternate diagnostic equations.
 
-The original model contains inconsistent speed factors and empirical constants.
-This migration preserves its working numerical equations; consult
-[the migration notes](docs/migration.md) before treating the power/speed convention
-as a physically consistent SI formulation.
+The analysis uses distinct speed quantities throughout:
+
+```text
+omega_mechanical = omega_rotor * gear_ratio * 2*pi/60
+omega_electrical = pole_pairs * omega_mechanical
+electrical_frequency = omega_electrical / (2*pi)
+output_power = load_torque * omega_mechanical
+```
+
+Rotor inputs remain RPM. Shaft power, windage, and the implicit torque loss
+balance use mechanical rad/s. All dq voltage, voltage-limit, and flux-weakening
+equations use electrical rad/s. Iron and magnet losses use electrical Hz.
+The complete analysis supplies these conversions automatically, with OpenMDAO
+units metadata and derivatives. `omega` remains an output alias for motor
+mechanical speed.
+
+When composing standalone submodels, add `MotorSpeedModel(pole_pairs=...,
+num_nodes=...)` with `promotes=['*']` and supply `omega_mechanical` in rad/s.
+Import it with `from lsdo_motor_om import MotorSpeedModel`. Torque-limit and
+flux-weakening components now take `omega_electrical`; performance and implicit
+torque components take all three explicit speed quantities. Their ambiguous
+legacy `omega` input has been removed. Use the same pole count throughout the
+assembly; see [the efficiency-map example](examples/efficiency_map.py).
+
+These corrections change operating results and optimization outcomes relative
+to the original CSDL package. The empirical loss coefficients and the separate
+main, efficiency-map, and diagnostic loss variants remain; see
+[the migration notes](docs/migration.md) for the equations and remaining model
+assumptions. `voltage_amplitude` remains the inherited 5000 motor RPM
+rated-voltage diagnostic; `U_MTPA` reports voltage at the operating speed.
 
 ## Validation
 
-Tests compare against saved outputs from the original local CSDL working tree at
-two converged operating points, both original current/loss variants, and the
-alternate diagnostic branch.
-They also check power balance, torque/efficiency equality, voltage-boundary
-currents, inactive-node routing, infeasible loads, and OpenMDAO total derivatives
-using complex step and central finite differences. Ordinary tests need no CSDL.
-The optional reference-capture script requires the original CSDL dependencies.
+Tests retain original CSDL references for geometry, magnetic properties, and
+currents evaluated at the same electrical speed. Legacy power and loss outputs
+are historical and are not correctness targets. Physics checks cover ideal
+gearbox power conservation, shaft power and its exact RPM/torque derivatives,
+electrical frequency, iron/magnet/windage losses in all three variants, and dq
+voltage-boundary currents across multiple pole counts. Tests also check torque
+and efficiency balance, inactive-node routing, infeasible loads, and OpenMDAO
+derivatives using complex step and central finite differences in both solve
+modes. Ordinary tests need no CSDL. The optional reference-capture script
+requires the original CSDL dependencies.
 
 The original MIT license is retained in `LICENSE.txt`.

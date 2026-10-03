@@ -1,5 +1,8 @@
 """Optional maintainer tool: capture reference outputs from the untouched CSDL source.
 
+This captures legacy equations, including their inconsistent speed factors.
+Tests use these outputs for unchanged geometry/magnetics and currents evaluated
+at the same electrical speed; legacy operating power/loss results are historical.
 Requires the original CSDL dependencies. The installed port and its tests do not.
 Run from the root: python tools/generate_csdl_reference.py
 """

@@ -7,6 +7,7 @@ from .._utils import ScalarState, bracketed_root
 from .TC1_torque_limit_model import ELECTRICAL_NAMES
 from .TC1_flux_weakening_model import FluxWeakeningModel
 from .TC1_mtpa_model import MTPAModel
+from .TC1_motor_speed_model import SPEED_UNITS
 from .TC1_post_processing_model import (
     PostProcessingModel, declare_performance_options, node_performance,
 )
@@ -15,7 +16,7 @@ from .TC1_post_processing_model import (
 class EMTorqueImplicitModel(ScalarState):
     """Native implicit state for the original ``load_torque=eta*T_em`` equation.
 
-    The equivalent positive-power residual ``load+loss/speed-T_em`` avoids the
+    The equivalent positive-power residual ``load+loss/omega_mechanical-T_em`` avoids the
     spurious zero-load solution in efficiency-map mode. Input-load mode selects
     the first feasible positive torque root, and raises AnalysisError when the
     requested load cannot be delivered within the voltage torque limit.
@@ -29,10 +30,10 @@ class EMTorqueImplicitModel(ScalarState):
         n = self.options['num_nodes']
         self.state_name = 'T_em' if self.options['mode'] == 'input_load' else 'load_torque'
         known = 'load_torque' if self.state_name == 'T_em' else 'T_em'
-        equation_names = [*ELECTRICAL_NAMES, 'omega', known, 'motor_variables',
+        equation_names = [*ELECTRICAL_NAMES, *SPEED_UNITS, known, 'motor_variables',
                           'I_q_temp', 'B_delta', 'D_i']
-        for name in (*ELECTRICAL_NAMES, 'omega', known, 'Id_fw_bracket', 'T_lim'):
-            self.add_input(name, shape=n)
+        for name in (*ELECTRICAL_NAMES, *SPEED_UNITS, known, 'Id_fw_bracket', 'T_lim'):
+            self.add_input(name, shape=n, units=SPEED_UNITS.get(name))
         self.add_input('T_lower_lim', val=np.zeros(n))
         for name in ('I_q_temp', 'B_delta', 'D_i'):
             self.add_input(name)
@@ -41,21 +42,19 @@ class EMTorqueImplicitModel(ScalarState):
 
     def residual(self, x, state):
         result = []
-        factor = 1. if self.options['loss_model'] == 'model_test' else 2*np.pi/60
         for i in range(self.options['num_nodes']):
             torque = state[i] if self.state_name == 'T_em' else x['T_em'][i]
             load = x['load_torque'][i] if self.state_name == 'T_em' else state[i]
             values = node_performance(x, i, torque, load, self.options)
-            result.append(load+values['P_loss']/(x['omega'][i]*factor)-torque)
+            result.append(load+values['P_loss']/x['omega_mechanical'][i]-torque)
         return np.asarray(result)
 
     def solve_real(self, x):
         result = []
-        factor = 1. if self.options['loss_model'] == 'model_test' else 2*np.pi/60
         for i in range(self.options['num_nodes']):
-            speed = x['omega'][i]*factor
+            speed = x['omega_mechanical'][i]
             if speed <= 0:
-                raise om.AnalysisError(f'EM torque node {i}: omega must be positive.')
+                raise om.AnalysisError(f'EM torque node {i}: omega_mechanical must be positive.')
             upper = x['T_lim'][i]*(1-1e-9)
             if self.state_name == 'load_torque':
                 torque = x['T_em'][i]

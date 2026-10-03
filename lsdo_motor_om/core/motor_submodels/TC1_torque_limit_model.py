@@ -34,8 +34,8 @@ class TorqueLimitCoefficients(om.ExplicitComponent):
 
     def setup(self):
         n = self.options['num_nodes']
-        for name in (*ELECTRICAL_NAMES, 'omega'):
-            self.add_input(name, shape=n)
+        for name in (*ELECTRICAL_NAMES, 'omega_electrical'):
+            self.add_input(name, shape=n, units='rad/s' if name == 'omega_electrical' else None)
         for name in QUARTIC_NAMES:
             self.add_output(name, shape=n)
         self.declare_partials('*', '*', method='cs')
@@ -43,9 +43,9 @@ class TorqueLimitCoefficients(om.ExplicitComponent):
     def compute(self, x, outputs):
         p, v = self.options['pole_pairs'], self.options['V_lim']
         r, ld, lq, psi = (x[n] for n in ELECTRICAL_NAMES)
-        w = x['omega']
+        w = x['omega_electrical']
         if np.any(np.real(w) <= 0) or np.any(np.real(ld-lq) == 0):
-            raise om.AnalysisError('Torque limit requires positive omega and unequal d/q inductances.')
+            raise om.AnalysisError('Torque limit requires positive omega_electrical and unequal d/q inductances.')
         den = 3*p*(ld-lq)
         a = den**2*((w*lq)**2+r**2)
         c1 = 12*p*w*r*(ld-lq)**2

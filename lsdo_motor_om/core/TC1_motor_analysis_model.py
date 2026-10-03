@@ -10,6 +10,7 @@ from .motor_submodels.TC1_flux_weakening_model import (
     FluxWeakeningBracketCoefficients, FluxWeakeningBracketModel, FluxWeakeningModel,
 )
 from .motor_submodels.TC1_mtpa_model import MTPAModel
+from .motor_submodels.TC1_motor_speed_model import MotorSpeedModel
 from .motor_submodels.TC1_implicit_em_torque_model import EMTorqueModel
 from .motor_submodels.TC1_post_processing_model import PostProcessingModel
 
@@ -32,8 +33,8 @@ class ParseActiveOperatingConditions(om.ExplicitComponent):
         if not 0 < self.active_count <= n:
             raise ValueError('Parser requires 1 <= num_active_nodes <= num_nodes.')
         for name in ('omega_rotor', 'load_torque_rotor'):
-            self.add_input(name, val=np.ones(n))
-        self.add_output('omega_rotor_active', shape=self.active_count)
+            self.add_input(name, val=np.ones(n), units='rpm' if name == 'omega_rotor' else None)
+        self.add_output('omega_rotor_active', shape=self.active_count, units='rpm')
         self.add_output('load_torque_rotor_active', shape=self.active_count)
         self.add_output('selection_indices', shape=(n, self.active_count))
         self.declare_partials('omega_rotor_active', 'omega_rotor')
@@ -65,23 +66,28 @@ class ParseActiveOperatingConditions(om.ExplicitComponent):
 
 
 class GearboxModel(om.ExplicitComponent):
+    """Ideal gearbox: rotor RPM to motor mechanical rad/s, conserving power."""
+
     def initialize(self):
         self.options.declare('num_nodes', default=1, types=int, lower=1)
         self.options.declare('gear_ratio', default=4., types=(int, float), lower=1e-12)
 
     def setup(self):
         n = self.options['num_nodes']
-        self.add_input('omega_rotor_active', shape=n)
+        self.add_input('omega_rotor_active', shape=n, units='rpm')
         self.add_input('load_torque_rotor_active', shape=n)
-        self.add_output('omega', shape=n)
+        self.add_output('omega', shape=n, units='rad/s', desc='Alias of omega_mechanical')
+        self.add_output('omega_mechanical', shape=n, units='rad/s')
         self.add_output('load_torque', shape=n)
         indices = np.arange(n)
         ratio = self.options['gear_ratio']
-        self.declare_partials('omega', 'omega_rotor_active', rows=indices, cols=indices, val=ratio*2*np.pi/60)
+        for name in ('omega', 'omega_mechanical'):
+            self.declare_partials(name, 'omega_rotor_active', rows=indices, cols=indices, val=ratio*2*np.pi/60)
         self.declare_partials('load_torque', 'load_torque_rotor_active', rows=indices, cols=indices, val=1/ratio)
 
     def compute(self, x, outputs):
         outputs['omega'] = x['omega_rotor_active']*self.options['gear_ratio']*2*np.pi/60
+        outputs['omega_mechanical'] = outputs['omega']
         outputs['load_torque'] = x['load_torque_rotor_active']/self.options['gear_ratio']
 
 
@@ -135,7 +141,7 @@ class IdleMotorOutputs(om.ExplicitComponent):
 
     def setup(self):
         n = self.options['num_nodes']
-        self.add_input('omega_rotor', val=np.zeros(n))
+        self.add_input('omega_rotor', val=np.zeros(n), units='rpm')
         self.add_input('load_torque_rotor', val=np.zeros(n))
         for name in ExpandActiveOutputs.output_mapping.values():
             self.add_output(name, val=np.zeros(n))
@@ -184,6 +190,8 @@ class TC1MotorAnalysisModel(om.Group):
                            ParseActiveOperatingConditions(num_nodes=n, num_active_nodes=a), promotes=['*'])
         self.add_subsystem('electrical_parameters', ElectricalParameters(num_nodes=a), promotes=['*'])
         self.add_subsystem('gearbox', GearboxModel(num_nodes=a, gear_ratio=self.options['gear_ratio']), promotes=['*'])
+        self.add_subsystem('motor_speed', MotorSpeedModel(pole_pairs=motor['pole_pairs'], num_nodes=a),
+                           promotes=['*'])
         control = dict(pole_pairs=motor['pole_pairs'], V_lim=self.options['V_lim'], num_nodes=a)
         self.add_subsystem('torque_limit_model', TorqueLimitModel(**control, use_expanded=True), promotes=['*'])
         self.add_subsystem('flux_weakening_bracket_coefficients', FluxWeakeningBracketCoefficients(**control), promotes=['*'])
