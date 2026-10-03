@@ -189,10 +189,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--rpm-min', type=float, default=100.)
-    parser.add_argument('--rpm-max', type=float, default=4000.)
+    parser.add_argument('--rpm-max', type=float, default=2500.)
     parser.add_argument('--rpm-points', type=int, default=81)
     parser.add_argument('--torque-min', type=float, default=5., help='Minimum sampled electromagnetic torque (N m).')
-    parser.add_argument('--torque-max', type=float, default=1000., help='Maximum sampled electromagnetic torque (N m).')
+    parser.add_argument('--torque-max', type=float, default=800., help='Maximum sampled electromagnetic torque (N m).')
     parser.add_argument('--torque-points', type=int, default=81)
     parser.add_argument('--torque-axis', choices=('shaft', 'em'), default='shaft')
     parser.add_argument('--output', type=Path, default=Path('efficiency_map.png'))
