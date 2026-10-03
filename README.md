@@ -1,8 +1,10 @@
 # lsdo_motor_om
 
-A native OpenMDAO migration of the local LSDO Motor TC1 permanent-magnet
-synchronous motor models. The original CSDL checkout remains in `lsdo_motor/`.
-All migrated implementation, tests, examples, and packaging live outside it.
+A native OpenMDAO migration of the LSDO Motor TC1 permanent-magnet
+synchronous motor models. The original CSDL-based `lsdo_motor` package was
+developed by LSDOLab and is available in the
+[LSDOLab/lsdo_motor repository](https://github.com/LSDOlab/lsdo_motor/).
+This repository contains the migrated implementation, tests, examples, and packaging.
 The runtime depends only on OpenMDAO, NumPy, and SciPy.
 
 ## Install and run
@@ -17,7 +19,6 @@ For tests and examples in the OpenMDAO development environment:
 
 ```sh
 conda activate openmdao
-export FI_PROVIDER=tcp
 python -m pip install -e '.[test]'
 python examples/basic.py
 python examples/efficiency_map.py
@@ -25,7 +26,6 @@ python examples/optimize_motor.py
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q
 ```
 
-`FI_PROVIDER=tcp` also applies if these components are used in an MPI problem.
 The examples run serially. Disabling pytest plugin autoload avoids the unrelated
 Dash/Werkzeug plugin conflict present in the supplied environment.
 
@@ -61,7 +61,6 @@ Their original class names, option names, submodel filenames, and 25-entry
 ## Structure
 
 ```text
-lsdo_motor/                               original CSDL checkout (untouched)
 lsdo_motor_om/
   __init__.py
   core/
