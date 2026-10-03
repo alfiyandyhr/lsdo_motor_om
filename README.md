@@ -19,7 +19,7 @@ For tests and examples in the OpenMDAO development environment:
 
 ```sh
 conda activate openmdao
-python -m pip install -e '.[test]'
+python -m pip install -e '.[test,plot]'
 python examples/basic.py
 python examples/efficiency_map.py
 python examples/optimize_motor.py
@@ -28,6 +28,35 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q
 
 The examples run serially. Disabling pytest plugin autoload avoids the unrelated
 Dash/Werkzeug plugin conflict present in the supplied environment.
+
+### Plot an efficiency map
+
+Install the optional plotting dependency and run the example:
+
+```sh
+python -m pip install -e '.[plot]'
+python examples/efficiency_map.py
+```
+
+This opens a filled contour plot and saves `efficiency_map.png`. The x axis is
+motor mechanical speed in RPM, the y axis is delivered shaft torque in N m,
+and the color and contour labels show efficiency in percent. The example uses
+the original efficiency-map loss variant, with `D_i=0.3723 m`, `L=0.2755 m`,
+six pole pairs, an 800 V voltage limit, and a 123 A current limit. Gray regions
+are outside the feasible or sampled positive-power motoring region; zero speed,
+zero torque, and regeneration are excluded.
+
+For a saved plot without a display, or different sampling ranges:
+
+```sh
+python examples/efficiency_map.py --no-show --output /tmp/efficiency_map.png
+python examples/efficiency_map.py --rpm-max 3000 --torque-max 900 --rpm-points 101 --torque-points 101
+python examples/efficiency_map.py --torque-axis em
+```
+
+The torque range controls the sampled electromagnetic torque `T_em`; the default
+plot uses the model's resulting shaft torque `load_torque`. `--torque-axis em`
+plots against `T_em` directly. The original motor loss equations remain unchanged.
 
 ## Use the complete motor
 
